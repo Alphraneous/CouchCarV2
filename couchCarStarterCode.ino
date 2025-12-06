@@ -6,54 +6,71 @@
 #endif
 #include <SPI.h>
 
-#include <utility>
-
 // Set this value to true if you want to see the positions of the buttons and joysticks
-#define _ENABLE_MODE_DEBUG true
+#define _ENABLE_MODE_DEBUG false
+#define _ENABLE_MODE_DEBUG2 true
 
 namespace USBLibrary {
     extern USB     usbDriver  {};
     extern XBOXONE xboxDriver {&usbDriver};
 }
 
-struct XboxInputScheme {
-
-    XboxInputScheme() {
-        leftHat = { 
-            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::LeftHatX),
-            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::LeftHatY),
-        };
-
-        rightHat = {
-            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::RightHatX),
-            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::RightHatY),
-        };
-
-        leftTrigger = USBLibrary::xboxDriver.getButtonPress(AnalogHatEnum::LT);
-        rightTrigger = USBLibrary::xboxDriver.getButtonPress(AnalogHatEnum::RT);
-    }
-
-    std::pair<int16_t, int16_t> leftHat;
-    std::pair<int16_t, int16_t> rightHat;
-    
-    uint16_t leftTrigger;
-    uint16_t rightTrigger;
-
-    bool xToggle;
-    bool yToggle;
-    bool aToggle;
-    bool bToggle;
-    bool leftBbumperToggle;
-    bool rightBumperToggle;
+struct i16Pair {
+    int16_t X;
+    int16_t Y;
 };
 
-//Toggle variables
-bool toggleA = false;
-bool toggleB = false;
-bool toggleX = false;
-bool toggleY = false;
-bool toggleLB = false;
-bool toggleRB = false;
+struct XboxInputScheme {
+
+    XboxInputScheme() = default;
+
+    i16Pair LH;
+    i16Pair RH;
+    
+    uint16_t LTR;
+    uint16_t RTR;
+
+    bool toggleX;
+    bool toggleY;
+    bool toggleA;
+    bool toggleB;
+    bool toggleLB;
+    bool toggleRB;
+
+    getLatestData() {
+        LH = { 
+            USBLibrary::xboxDriver.getAnalogHat(LeftHatX), // Integer from -32768 to 32767 for all getAnalogHat calls
+            USBLibrary::xboxDriver.getAnalogHat(LeftHatY),
+        };
+
+        RH = {
+            USBLibrary::xboxDriver.getAnalogHat(RightHatX),
+            USBLibrary::xboxDriver.getAnalogHat(RightHatY),
+        };
+
+        LTR = USBLibrary::xboxDriver.getButtonPress(LT); //Integer from 0 to 1023
+        RTR = USBLibrary::xboxDriver.getButtonPress(RT);
+
+        toggleX = USBLibrary::xboxDriver.getButtonClick(X) ? !toggleX : toggleX;
+        toggleY = USBLibrary::xboxDriver.getButtonClick(Y) ? !toggleY : toggleY;
+        toggleA = USBLibrary::xboxDriver.getButtonClick(A) ? !toggleA : toggleA;
+        toggleB = USBLibrary::xboxDriver.getButtonClick(B) ? !toggleB : toggleB;
+
+        if (USBLibrary::xboxDriver.getButtonClick(LB)) {
+            toggleLB = !toggleLB;
+            toggleRB = 0;
+        }
+        if (USBLibrary::xboxDriver.getButtonClick(RB)) {
+            toggleRB = !toggleRB;
+            toggleLB = 0;
+        }
+    }
+};
+
+XboxInputScheme xis {};
+double throttle = 0;
+double scale = 0;
+int absX = 0;
 
 //Goal variables
 int MotorL = 0;
@@ -64,10 +81,11 @@ bool BrakeLights = false;
 bool TurnL = false;
 bool TurnR = false;
 
+
 // Runs once on startup
 void setup() 
 {
-    constexpr uint16_t baudeRate = 115200;
+    constexpr uint32_t baudeRate = 115200;
     Serial.begin(baudeRate);
     
     while(!Serial); // Wait for serial port to connect - used on Leonardo, Teensy and other boards with built-in USB CDC serial connection
@@ -83,14 +101,8 @@ void setup()
 void loop() 
 {
     USBLibrary::usbDriver.Task();
-    if!(USBLibrary::xboxDriver.XboxOneConnected)
+    if(!USBLibrary::xboxDriver.XboxOneConnected)
         return;
-
-    int16_t LHX = USBLibrary::xboxDriver.getAnalogHat(LeftHatX); //Integer from -32768 to 32767
-    int16_t LHY = USBLibrary::xboxDriver.getAnalogHat(LeftHatY); //Integer from -32768 to 32767
-
-    int16_t RHX = USBLibrary::xboxDriver.getAnalogHat(RightHatX); //Integer from -32768 to 32767
-    int16_t RHY = USBLibrary::xboxDriver.getAnalogHat(RightHatY); //Integer from -32768 to 32767
 
     /*
     Important note for the joysticks: 
@@ -98,41 +110,44 @@ void loop()
     For our purposes, we can consider any value between -7500 and 7500 to be "zero".
     That is, when the position of the joystick (either x or y) is in this range, the joystick can be considered to be at rest and not doing anything
     Make sure to keep this in mind as you're developing your control code.
+
+    The letter buttons are already mapped to toggle variables
+    Pressing any of these buttons toggles their corresponding variable between false and true (off and on)
+    Useful for toggling lights, etc
+
+    Unmapped buttons (LeftButton and RightButton)
+    Turn signals maybe?
+    If so, you need to use toggle variables similar to the letter buttons but make sure that only one turn signal is on at a time
+
+    Add additional code here
     */
+    xis.getLatestData();
 
-    uint16_t LTR = USBLibrary::xboxDriver.getButtonPress(LT); //Integer from 0 to 1023
-    uint16_t RTR = USBLibrary::xboxDriver.getButtonPress(RT); //Integer from 0 to 1023
+    constexpr double minTurnRatio = 50.0;
 
-    //The letter buttons are already mapped to toggle variables
-    //Pressing any of these buttons toggles their corresponding variable between false and true (off and on)
-    //Useful for toggling lights, etc
+    //Throttle code
+    throttle = ((xis.RTR/1023.0)*100);
+    absX = abs(xis.LH.X);
 
-    if (USBLibrary::xboxDriver.getButtonClick(A)) {
-        toggleA = !toggleA;
+    //Steering
+    if(absX > 7500) {
+        scale = abs > 31000? minTurnRatio/100 : ((((absX-7500.0)*-(100.0-minTurnRatio)) / (32767.0-7500.0)) + 100)/100.0;
     }
-    if (USBLibrary::xboxDriver.getButtonClick(B)) {
-        toggleB = !toggleB;
-    }
-    if (USBLibrary::xboxDriver.getButtonClick(X)) {
-        toggleX = !toggleX;
-    }
-    if (USBLibrary::xboxDriver.getButtonClick(Y)) {
-        toggleY = !toggleY;
-    }
-
-    //Unmapped buttons (LeftButton and RightButton)
-    //Turn signals maybe?
-    //If so, you need to use toggle variables similar to the letter buttons but make sure that only one turn signal is on at a time
-    //Also, you need to 
-    if (USBLibrary::xboxDriver.getButtonClick(LB)) {
-
-    }
-        
-    if (USBLibrary::xboxDriver.getButtonClick(RB)) {
-
+    
+    if(xis.LH.X < -7500) {
+        MotorR = throttle;
+        MotorL = throttle*scale;
+    } else if(xis.LH.X > 7500) {
+        MotorL = throttle;
+        MotorR = throttle*scale;
+    } else {
+        MotorL = throttle;
+        MotorR = throttle;
     }
 
-    //Add additional code here
+    //Lights
+    TurnL = xis.toggleLB;
+    TurnR = xis.toggleRB;
 
     /*
     YOUR OBJECTIVE: change these variables based on the controller inputs and the tank drive control scheme. 
@@ -142,7 +157,7 @@ void loop()
     Make sure the variables always stay in the bounds defined below.
     */
     MotorL = 0;           //0-100
-    MotorR = 0;           //0-100
+               //0-100
     Brake = 0;            //0-100
     Lights = false;       //true or false
     BrakeLights = false;  //true or false
@@ -151,25 +166,40 @@ void loop()
 
     delay(2);
 
-
     // Print debug information
 #if _ENABLE_MODE_DEBUG
     Serial.print(F("LX: "));
-    Serial.print(LHX);
+    Serial.print(xis.LH.X);
     Serial.print(F(" RX: "));
-    Serial.print(RHX);
+    Serial.print(xis.RH.X);
     Serial.print(F(" LT: "));
-    Serial.print(LTR);
+    Serial.print(xis.LTR);
     Serial.print(F(" RT: "));
-    Serial.print(RTR);
+    Serial.print(xis.RTR);
     Serial.print(F(" toggle Y: "));
-    Serial.print(toggleY);
+    Serial.print(xis.toggleY);
     Serial.print(F(" toggle B: "));
-    Serial.print(toggleB);
+    Serial.print(xis.toggleB);
     Serial.print(F(" toggle A: "));
-    Serial.print(toggleA);
+    Serial.print(xis.toggleA);
     Serial.print(F(" toggle X: "));
-    Serial.print(toggleX);
+    Serial.print(xis.toggleX);
+    Serial.println();
+#endif 
+
+#if _ENABLE_MODE_DEBUG2
+    Serial.print(F("T: "));
+    Serial.print(throttle);
+    Serial.print(F(" S: "));
+    Serial.print(scale);
+    Serial.print(F(" ML: "));
+    Serial.print(MotorL);
+    Serial.print(F(" MR: "));
+    Serial.print(MotorR);
+    Serial.print(F(" LT: "));
+    Serial.print(TurnL);
+    Serial.print(F(" RT: "));
+    Serial.print(TurnR);
     Serial.println();
 #endif 
 }
