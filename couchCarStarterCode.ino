@@ -151,11 +151,11 @@ void loop()
     // =========================================
     //  SETTINGS
     // =========================================
-    constexpr double minTurnRatio = 50.0; // scale factor floor
-    constexpr double deadZone = 7500.0;   // joystick raw deadzone
-    constexpr double maxJoyRaw = 32768.0;
-    constexpr double expo = 1.5; // recommended game-like exponent
+    constexpr double minTurnRatio = 50.0; // Minimum Motor Scale
+    constexpr double deadZone = 7500.0;   // Absolute Deadzone Value
+    constexpr double expo = 1.5; // Ramping Exponent
 
+    constexpr double maxJoyRaw = 32768.0;
     int32_t xRaw = xis.LH.X; // -32768..32767
     int32_t rtr = xis.RTR;   // 0..1023
     int32_t ltr = xis.LTR;   // 0..1023
