@@ -1,4 +1,6 @@
 #include <XBOXONE.h>
+#include <Adafruit_MCP4728.h>
+#include <Wire.h>
 
 // Satisfy the IDE for includes, but do add to actual compilation target
 #ifdef _USING_ARDUINO_IDE
@@ -74,6 +76,8 @@ struct XboxInputScheme
 };
 
 XboxInputScheme xis{};
+Adafruit_MCP4728 mcp;
+
 double throttle = 0;
 double scale = 0;
 int absX = 0;
@@ -96,6 +100,7 @@ void setup()
     while (!Serial)
         ; // Wait for serial port to connect - used on Leonardo, Teensy and other boards with built-in USB CDC serial connection
 
+    // Start USB Host
     if (USBLibrary::usbDriver.Init() == -1)
     {
         Serial.print(F("\r\nOSC did not start"));
@@ -104,6 +109,18 @@ void setup()
     }
 
     Serial.print(F("\r\nXBOX ONE USB Library Started"));
+
+    // Start MCP
+    if (!mcp.begin())
+    {
+        Serial.println("Failed to find MCP4728 chip");
+        while (1)
+        {
+            delay(10);
+        }
+    }
+    Serial.print(F("\r\nMCP DAC Initialized"));
+
 }
 
 void loop()
@@ -137,7 +154,7 @@ void loop()
     constexpr double minTurnRatio = 50.0; // scale factor floor
     constexpr double deadZone = 7500.0;   // joystick raw deadzone
     constexpr double maxJoyRaw = 32768.0;
-    constexpr double expo = 1.6; // recommended game-like exponent
+    constexpr double expo = 1.5; // recommended game-like exponent
 
     int32_t xRaw = xis.LH.X; // -32768..32767
     int32_t rtr = xis.RTR;   // 0..1023
@@ -193,6 +210,30 @@ void loop()
     TurnL = xis.toggleLB;
     TurnR = xis.toggleRB;
     Lights = xis.toggleX;
+
+    // Voltage stuff
+    constexpr double restV = 1.1;
+    constexpr double minV = 1.25;
+    constexpr double maxV = 3.7;
+
+    auto motorToVoltage = [&](double M)
+    {
+        if (M <= 0.01)
+            return restV;
+
+        double pct = M / 100.0;
+        return minV + pct * (maxV - minV);
+    };
+
+    double voltA = motorToVoltage(MotorL); // to VA
+    double voltB = motorToVoltage(MotorR); // to VB
+
+   
+    uint16_t dacA = (uint16_t)(voltA / 5.0 * 4095);
+    uint16_t dacB = (uint16_t)(voltB / 5.0 * 4095);
+
+    mcp.setChannelValue(MCP4728_CHANNEL_A, dacA);
+    mcp.setChannelValue(MCP4728_CHANNEL_B, dacB);
 
     delay(2);
 
