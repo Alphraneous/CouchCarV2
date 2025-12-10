@@ -9,31 +9,51 @@
 #include <SPI.h>
 
 // Set this value to true if you want to see the positions of the buttons and joysticks
-#define _ENABLE_MODE_DEBUG false
-#define _ENABLE_MODE_DEBUG2 true
+#define _ENABLE_MODE_INPUT_DEBUG  false
+#define _ENABLE_MODE_OUTPUT_DEBUG true
 
 namespace USBLibrary
 {
-    extern USB usbDriver{};
+    extern USB usbDriver{}; // If this causes a linker issue, remove "extern" or switch to "inline" if >= C++17
     extern XBOXONE xboxDriver{&usbDriver};
 }
 
-struct i16Pair
-{
+struct i16Pair {
     int16_t X;
     int16_t Y;
 };
 
+struct f64Pair {
+    double L;
+    double R;
+};
+
+static double clamp(double value, double min, double max);
+
+//Turn light stuff
+uint8_t turnLightTickCounter;
+bool onState = true;
+
+// =========================================
+//  SETTINGS
+// =========================================
+constexpr double minTurnRatio      = 50.0;    // Minimum motor scale
+constexpr double deadZone          = 0.1;     // Absolute deadzone value
+constexpr double throttleExp       = 2.5;     // Throttle ramping exponent
+constexpr double brakeExp          = 2.5;     // Brake ramping exponent
+constexpr double steeringExp       = 2.5;     // Brake ramping exponent
+constexpr double maxJoyRawMagn     = 32768.0; // Max magnitude of raw joystick input
+constexpr double maxTriggerRawMagn = 1024.0;  // Max magnitude of raw trigger input
+
 struct XboxInputScheme
 {
-
     XboxInputScheme() = default;
 
     i16Pair LH;
     i16Pair RH;
 
-    uint16_t LTR;
-    uint16_t RTR;
+    uint16_t LT;
+    uint16_t RT;
 
     bool toggleX;
     bool toggleY;
@@ -42,54 +62,127 @@ struct XboxInputScheme
     bool toggleLB;
     bool toggleRB;
 
-    getLatestData()
+    void getLatestData()
     {
         LH = {
-            USBLibrary::xboxDriver.getAnalogHat(LeftHatX), // Integer from -32768 to 32767 for all getAnalogHat calls
-            USBLibrary::xboxDriver.getAnalogHat(LeftHatY),
+            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::LeftHatX), // Integer from -32768 to 32767 for all getAnalogHat calls
+            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::LeftHatY),
         };
 
         RH = {
-            USBLibrary::xboxDriver.getAnalogHat(RightHatX),
-            USBLibrary::xboxDriver.getAnalogHat(RightHatY),
+            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::RightHatX),
+            USBLibrary::xboxDriver.getAnalogHat(AnalogHatEnum::RightHatY),
         };
 
-        LTR = USBLibrary::xboxDriver.getButtonPress(LT); // Integer from 0 to 1023
-        RTR = USBLibrary::xboxDriver.getButtonPress(RT);
+        LT = USBLibrary::xboxDriver.getButtonPress(ButtonEnum::LT); // Integer from 0 to 1023
+        RT = USBLibrary::xboxDriver.getButtonPress(ButtonEnum::RT);
 
-        toggleX = USBLibrary::xboxDriver.getButtonClick(X) ? !toggleX : toggleX;
-        toggleY = USBLibrary::xboxDriver.getButtonClick(Y) ? !toggleY : toggleY;
-        toggleA = USBLibrary::xboxDriver.getButtonClick(A) ? !toggleA : toggleA;
-        toggleB = USBLibrary::xboxDriver.getButtonClick(B) ? !toggleB : toggleB;
+        toggleX = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::X) ? !toggleX : toggleX;
+        toggleY = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::Y) ? !toggleY : toggleY;
+        toggleA = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::A) ? !toggleA : toggleA;
+        toggleB = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::B) ? !toggleB : toggleB;
 
-        if (USBLibrary::xboxDriver.getButtonClick(LB))
+        if (USBLibrary::xboxDriver.getButtonClick(ButtonEnum::LB))
         {
+            turnLightTickCounter = 0;
+            onState = true;
             toggleLB = !toggleLB;
-            toggleRB = 0;
+            toggleRB = false; 
+            
         }
-        if (USBLibrary::xboxDriver.getButtonClick(RB))
+        if (USBLibrary::xboxDriver.getButtonClick(ButtonEnum::RB))
         {
+            turnLightTickCounter = 0;
+            onState = true;
             toggleRB = !toggleRB;
-            toggleLB = 0;
+            toggleLB = false;
         }
     }
 };
 
-XboxInputScheme xis{};
-Adafruit_MCP4728 mcp;
+struct VehicleControl {
+    VehicleControl() = default;
+   
+    f64Pair motors; // Percentage 0..1 of max channel voltage
+    double  brake;  // Percentage 0..1 of max channel voltage
 
-double throttle = 0;
-double scale = 0;
-int absX = 0;
+    bool brakeLight;
+    bool headLight;
+    bool leftTurnLight;
+    bool rightTurnLight;
 
-// Goal variables
-int MotorL = 0;
-int MotorR = 0;
-double Brake = 0;
-bool Lights = false;
-bool BrakeLights = false;
-bool TurnL = false;
-bool TurnR = false;
+    void setMotorPercentage(const XboxInputScheme& xis, double throttle) {
+        // Steering
+        double absLXNorm = clamp(fabs(xis.LH.X) / maxJoyRawMagn, 0.0, 1.0);
+
+        if (fabs(absLXNorm - deadZone) < 1e-3) // If the joysticks are held still / in deadzone, continue both motors moving straight
+        {
+            motors = { throttle, throttle }; 
+            return; 
+        }
+
+        // Apply exponential game curve
+        double turnCurve = pow(absLXNorm, steeringExp);
+        double minScale = minTurnRatio / 100.0;
+        double scale = 1.0 - (turnCurve * (1.0 - minScale)); // Scale of one motor as a percentage of another
+
+        if (xis.LH.X < 0) // If the joystick is pushed to the left, turn left
+        {
+            motors.L = throttle * scale;
+            motors.R = throttle;
+        }
+        else if (xis.LH.X > 0) // If the joystick is pushed to the right, turn right
+        {
+            motors.L = throttle;
+            motors.R = throttle * scale;
+        }
+    }
+
+    void setBrakePercentage(const XboxInputScheme& xis) {
+        double bNorm = clamp(xis.LT / maxTriggerRawMagn, 0.0, 1.0);
+        brake = pow(bNorm, brakeExp);
+
+        //  TODO: Not implemented
+    }
+
+    // Light output
+    void setLights(const XboxInputScheme& xis) {
+        constexpr uint8_t brakeLightPin = 4; // Set Arduino output pins used for lights
+        constexpr uint8_t headLightPin  = 5; 
+        constexpr uint8_t leftTurnPin   = 6; 
+        constexpr uint8_t rightTurnPin  = 7; 
+
+        // Assign member light toggle values and output to Arduino pins
+        // Display the brake light if the value of brake is greater than epsilon
+        (brakeLight = brake > 1e-3) ? digitalWrite(brakeLightPin, HIGH) : digitalWrite(brakeLightPin, LOW);
+        (headLight = xis.toggleX)   ? digitalWrite(headLightPin, HIGH)  : digitalWrite(headLightPin, LOW);
+
+        
+        turnLightTickCounter++;
+        if (turnLightTickCounter > 250) // Arbitrary tick count for 2ms * 250 ticks = approximately 500ms
+        {
+           turnLightTickCounter = 0;   
+           onState = !onState;
+        }
+
+        leftTurnLight  = onState && (xis.toggleY || xis.toggleLB);
+        rightTurnLight = onState && (xis.toggleY || xis.toggleRB);
+
+        if (!onState) {
+            digitalWrite(leftTurnPin, LOW); 
+            digitalWrite(rightTurnPin, LOW);
+            return;
+        }
+
+        digitalWrite(leftTurnPin,  (xis.toggleY || xis.toggleLB ? HIGH : LOW));
+        digitalWrite(rightTurnPin, (xis.toggleY || xis.toggleRB ? HIGH : LOW));
+    }
+};
+      
+XboxInputScheme  xis{};
+VehicleControl   vc{};
+Adafruit_MCP4728 mcp{};
+
 
 // Runs once on startup
 void setup()
@@ -120,7 +213,7 @@ void setup()
         }
     }
     Serial.print(F("\r\nMCP DAC Initialized"));
-
+    Serial.println();
 }
 
 void loop()
@@ -148,91 +241,34 @@ void loop()
     */
     xis.getLatestData();
 
-    // =========================================
-    //  SETTINGS
-    // =========================================
-    constexpr double minTurnRatio = 50.0; // Minimum motor scale
-    constexpr double deadZone = 7500.0;   // Absolute deadzone Value
-    constexpr double throttleExp = 1.5; // Throttle ramping Exponent
-    constexpr double brakeExp = 1.5; // Brake ramping Exponent
-    constexpr double steeringExp = 1.5; // Brake ramping Exponent
-
-    constexpr double maxJoyRaw = 32768.0;
-    int32_t xRaw = xis.LH.X; // -32768..32767
-    int32_t rtr = xis.RTR;   // 0..1023
-    int32_t ltr = xis.LTR;   // 0..1023
-
     // Throttle
-    double tNorm = rtr / 1023.0;
-    double tCurve = pow(tNorm, throttleExp);
-    double throttle = tCurve * 100.0;
+    double tNorm = clamp(xis.RT / maxTriggerRawMagn, 0.0, 1.0);
+    double throttle = pow(tNorm, throttleExp);
+    
+    // Set motor percentage
+    vc.setMotorPercentage(xis, throttle);
 
-    // Brake
-    double bNorm = ltr / 1023.0;
-    double Brake = pow(bNorm, brakeExp) * 100.0;
-    bool BrakeLights = Brake > 2;
+    // Set break percentage
+    vc.setBrakePercentage(xis);
+    vc.setLights(xis);
 
-    // Steering
-    double absX = fabs((double)xRaw);
-    absX = fmin(absX, maxJoyRaw);
-    double scale = 1.0; // default = 100%
+    auto motorToVoltage = [](double M) -> double {
+        // Voltage constants
+        constexpr double restV = 1.1;
+        constexpr double minV  = 1.25;
+        constexpr double maxV  = 3.7;
 
-    if (absX > deadZone)
-    {
-        // Normalize turning: deadZone → 0, max → 1
-        double turnNorm = (absX - deadZone) / (maxJoyRaw - deadZone);
-        if (turnNorm < 0)
-            turnNorm = 0;
-        if (turnNorm > 1)
-            turnNorm = 1;
-
-        // Apply exponential game curve (SAME exponent as throttle)
-        double turnCurve = pow(turnNorm, steeringExp);
-
-        // Map 0..1 → 1.0..0.50
-        double minScale = minTurnRatio / 100.0;
-        scale = 1.0 - (turnCurve * (1.0 - minScale));
-    }
-
-    double MotorL = throttle;
-    double MotorR = throttle;
-
-    if (xRaw < -deadZone)
-    {
-        MotorL = throttle * scale;
-        MotorR = throttle;
-    }
-    else if (xRaw > deadZone)
-    {
-        MotorL = throttle;
-        MotorR = throttle * scale;
-    }
-
-    // Lights
-    TurnL = xis.toggleLB;
-    TurnR = xis.toggleRB;
-    Lights = xis.toggleX;
-
-    // Voltage stuff
-    constexpr double restV = 1.1;
-    constexpr double minV = 1.25;
-    constexpr double maxV = 3.7;
-
-    auto motorToVoltage = [&](double M)
-    {
         if (M <= 0.01)
             return restV;
 
-        double pct = M / 100.0;
-        return minV + pct * (maxV - minV);
+        return minV + M * (maxV - minV);
     };
 
-    double voltA = motorToVoltage(MotorL); // to VA
-    double voltB = motorToVoltage(MotorR); // to VB
+    double voltA = motorToVoltage(vc.motors.L); // to VA
+    double voltB = motorToVoltage(vc.motors.R); // to VB
 
-   
-    uint16_t dacA = (uint16_t)(voltA / 5.0 * 4095);
-    uint16_t dacB = (uint16_t)(voltB / 5.0 * 4095);
+    uint16_t dacA = voltA / 5.0 * 4095;
+    uint16_t dacB = voltB / 5.0 * 4095;
 
     mcp.setChannelValue(MCP4728_CHANNEL_A, dacA);
     mcp.setChannelValue(MCP4728_CHANNEL_B, dacB);
@@ -240,15 +276,15 @@ void loop()
     delay(2);
 
     // Print debug information
-#if _ENABLE_MODE_DEBUG
+#if _ENABLE_MODE_INPUT_DEBUG
     Serial.print(F("LX: "));
     Serial.print(xis.LH.X);
     Serial.print(F(" RX: "));
     Serial.print(xis.RH.X);
     Serial.print(F(" LT: "));
-    Serial.print(xis.LTR);
+    Serial.print(xis.LT);
     Serial.print(F(" RT: "));
-    Serial.print(xis.RTR);
+    Serial.print(xis.RT);
     Serial.print(F(" toggle Y: "));
     Serial.print(xis.toggleY);
     Serial.print(F(" toggle B: "));
@@ -260,19 +296,32 @@ void loop()
     Serial.println();
 #endif
 
-#if _ENABLE_MODE_DEBUG2
+#if _ENABLE_MODE_OUTPUT_DEBUG
     Serial.print(F("T: "));
     Serial.print(throttle);
     Serial.print(F(" B: "));
-    Serial.print(Brake);
-    Serial.print(F(" ML: "));
-    Serial.print(MotorL);
+    Serial.print(vc.brake);
+    Serial.print(F(" ML: ")); 
+    Serial.print(vc.motors.L);
     Serial.print(F(" MR: "));
-    Serial.print(MotorR);
+    Serial.print(vc.motors.R);
+    Serial.print(F(" BL: "));
+    Serial.print(vc.brakeLight);
+    Serial.print(F(" HL: "));
+    Serial.print(vc.headLight);
     Serial.print(F(" TL: "));
-    Serial.print(TurnL);
+    Serial.print(vc.leftTurnLight);
     Serial.print(F(" TR: "));
-    Serial.print(TurnR);
+    Serial.print(vc.rightTurnLight);
     Serial.println();
 #endif
+}
+
+double clamp(double value, double min, double max) 
+{
+    if (value > max)
+        return max;
+    if (value < min)
+        return min;
+    return value;
 }
