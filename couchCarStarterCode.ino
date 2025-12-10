@@ -151,9 +151,11 @@ void loop()
     // =========================================
     //  SETTINGS
     // =========================================
-    constexpr double minTurnRatio = 50.0; // Minimum Motor Scale
-    constexpr double deadZone = 7500.0;   // Absolute Deadzone Value
-    constexpr double expo = 1.5; // Ramping Exponent
+    constexpr double minTurnRatio = 50.0; // Minimum motor scale
+    constexpr double deadZone = 7500.0;   // Absolute deadzone Value
+    constexpr double throttleExp = 1.5; // Throttle ramping Exponent
+    constexpr double brakeExp = 1.5; // Brake ramping Exponent
+    constexpr double steeringExp = 1.5; // Brake ramping Exponent
 
     constexpr double maxJoyRaw = 32768.0;
     int32_t xRaw = xis.LH.X; // -32768..32767
@@ -162,12 +164,12 @@ void loop()
 
     // Throttle
     double tNorm = rtr / 1023.0;
-    double tCurve = pow(tNorm, expo);
+    double tCurve = pow(tNorm, throttleExp);
     double throttle = tCurve * 100.0;
 
     // Brake
     double bNorm = ltr / 1023.0;
-    double Brake = pow(bNorm, expo) * 100.0;
+    double Brake = pow(bNorm, brakeExp) * 100.0;
     bool BrakeLights = Brake > 2;
 
     // Steering
@@ -185,7 +187,7 @@ void loop()
             turnNorm = 1;
 
         // Apply exponential game curve (SAME exponent as throttle)
-        double turnCurve = pow(turnNorm, expo);
+        double turnCurve = pow(turnNorm, steeringExp);
 
         // Map 0..1 → 1.0..0.50
         double minScale = minTurnRatio / 100.0;
