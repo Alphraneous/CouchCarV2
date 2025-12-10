@@ -78,7 +78,14 @@ struct XboxInputScheme
         RT = USBLibrary::xboxDriver.getButtonPress(ButtonEnum::RT);
 
         toggleX = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::X) ? !toggleX : toggleX;
-        toggleY = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::Y) ? !toggleY : toggleY;
+
+        if (USBLibrary::xboxDriver.getButtonClick(ButtonEnum::Y))
+        {
+            toggleY = !toggleY;
+            turnLightTickCounter = 0;
+            onState = true;
+        }
+    
         toggleA = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::A) ? !toggleA : toggleA;
         toggleB = USBLibrary::xboxDriver.getButtonClick(ButtonEnum::B) ? !toggleB : toggleB;
 
@@ -159,7 +166,7 @@ struct VehicleControl {
 
         
         turnLightTickCounter++;
-        if (turnLightTickCounter > 250) // Arbitrary tick count for 2ms * 250 ticks = approximately 500ms
+        if (turnLightTickCounter > 80) // Arbitrary tick count for 2ms * x ticks = approximately 2x ms
         {
            turnLightTickCounter = 0;   
            onState = !onState;
