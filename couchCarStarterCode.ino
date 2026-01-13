@@ -37,11 +37,11 @@ bool onState = true;
 // =========================================
 //  SETTINGS
 // =========================================
-constexpr double minTurnRatio      = 50.0;    // Minimum motor scale
+constexpr double minTurnRatio      = 5.0;    // Minimum motor scale
 constexpr double deadZone          = 0.1;     // Absolute deadzone value
-constexpr double throttleExp       = 2.5;     // Throttle ramping exponent
-constexpr double brakeExp          = 2.5;     // Brake ramping exponent
-constexpr double steeringExp       = 2.5;     // Brake ramping exponent
+constexpr double throttleExp       = 1.5;     // Throttle ramping exponent
+constexpr double brakeExp          = 2.0;     // Brake ramping exponent
+constexpr double steeringExp       = 2.0;     // Brake ramping exponent
 constexpr double maxJoyRawMagn     = 32768.0; // Max magnitude of raw joystick input
 constexpr double maxTriggerRawMagn = 1024.0;  // Max magnitude of raw trigger input
 
@@ -194,6 +194,10 @@ Adafruit_MCP4728 mcp{};
 // Runs once on startup
 void setup()
 {
+    pinMode(4,OUTPUT);
+    pinMode(5,OUTPUT);
+    pinMode(6,OUTPUT);
+    pinMode(7,OUTPUT);
     constexpr uint32_t baudeRate = 115200;
     Serial.begin(baudeRate);
 
@@ -277,8 +281,8 @@ void loop()
     uint16_t dacA = voltA / 5.0 * 4095;
     uint16_t dacB = voltB / 5.0 * 4095;
 
-    mcp.setChannelValue(MCP4728_CHANNEL_A, dacA);
-    mcp.setChannelValue(MCP4728_CHANNEL_B, dacB);
+    mcp.setChannelValue(MCP4728_CHANNEL_B, dacA);
+    mcp.setChannelValue(MCP4728_CHANNEL_A, dacB);
 
     delay(2);
 
