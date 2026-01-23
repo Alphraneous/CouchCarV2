@@ -41,6 +41,8 @@ const int brakePin = 3;
 const int pwmMin = 600; //microseconds
 const int pwmMax = 2200; //microseconds
 
+Servo servo;
+
 // =========================================
 //  SETTINGS
 // =========================================
@@ -155,6 +157,7 @@ struct VehicleControl {
     void setBrakePercentage(const XboxInputScheme& xis) {
         double bNorm = clamp(xis.LT / maxTriggerRawMagn, 0.0, 1.0);
         brake = pow(bNorm, brakeExp);
+        servo.writeMicroseconds(pwmMax + (brake * (pwmMin - pwmMax)));
 
         //  TODO: Not implemented
     }
@@ -232,6 +235,10 @@ void setup()
     }
     Serial.print(F("\r\nMCP DAC Initialized"));
     Serial.println();
+
+    //servo shi
+    brakeServo.attach(brakePin, pwmMin, pwmMax); 
+    brakeServo.writeMicroseconds(pwmMax); 
 }
 
 void loop()
