@@ -1,6 +1,8 @@
 #include <XBOXONE.h>
 #include <Adafruit_MCP4728.h>
 #include <Wire.h>
+#include <Servo.h>
+
 
 // Satisfy the IDE for includes, but do add to actual compilation target
 #ifdef _USING_ARDUINO_IDE
@@ -33,6 +35,11 @@ static double clamp(double value, double min, double max);
 //Turn light stuff
 uint8_t turnLightTickCounter;
 bool onState = true;
+
+//Brake servo
+const int brakePin = 3;
+const int pwmMin = 600; //microseconds
+const int pwmMax = 2200; //microseconds
 
 // =========================================
 //  SETTINGS
