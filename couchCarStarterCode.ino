@@ -157,7 +157,9 @@ struct VehicleControl {
     void setBrakePercentage(const XboxInputScheme& xis) {
         double bNorm = clamp(xis.LT / maxTriggerRawMagn, 0.0, 1.0);
         brake = pow(bNorm, brakeExp);
-        servo.writeMicroseconds(pwmMax + (brake * (pwmMin - pwmMax)));
+        int brakePulse = pwmMax + brake * (pwmMin - pwmMax);
+        brakePulse = constrain(brakePulse, pwmMin, pwmMax);
+        servo.writeMicroseconds(brakePulse);
 
         //  TODO: Not implemented
     }
