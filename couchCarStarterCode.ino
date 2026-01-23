@@ -238,8 +238,27 @@ void loop()
 {
     USBLibrary::usbDriver.Task();
     if (!USBLibrary::xboxDriver.XboxOneConnected)
-        return;
+    {
+        //empty object so dont go brr
+        xis = XboxInputScheme(); 
+        vc = VehicleControl();   
 
+        digitalWrite(4, LOW); 
+        digitalWrite(5, LOW); 
+        digitalWrite(6, LOW); 
+        digitalWrite(7, LOW); 
+
+        double restVolt = 1.1; 
+        uint16_t dacRest = (restVolt / 5.0) * 4095;         //CHECK CALC TS FROM GPT MIGHT BE WRONG
+        mcp.setChannelValue(MCP4728_CHANNEL_B, dacRest);
+        mcp.setChannelValue(MCP4728_CHANNEL_A, dacRest);
+        return;
+    }
+    // -----------------------
+
+    // If we reach here, controller is connected
+    // (Existing code continues below...)
+    xis.getLatestData();
     /*
     Important note for the joysticks:
     Due to something called stick drift, when the joysticks are at rest (not being touched), their value isn't zero, but rather some number roughly around 1500 to 3000
