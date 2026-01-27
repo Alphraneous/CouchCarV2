@@ -1,7 +1,6 @@
 #include <XBOXONE.h>
 #include <Adafruit_MCP4728.h>
 #include <Wire.h>
-#include <Servo.h>
 
 
 // Satisfy the IDE for includes, but do add to actual compilation target
@@ -37,11 +36,12 @@ uint8_t turnLightTickCounter;
 bool onState = true;
 
 //Brake servo
-const int brakePin = 3;
-const int pwmMin = 600; //microseconds
-const int pwmMax = 2200; //microseconds
+const int PWM_PIN = 3;
+const int pwmMin = 16; //duty cycle% //DO NOT GO LOWER THAN 16
+const int pwmMax = 30; //duty cycle% //DO NOT GO HIGHER THAN 67
 
-Servo servo;
+void setupPwm50Hz();
+void setDutyPercent(double dutyPct);
 
 // =========================================
 //  SETTINGS
@@ -49,7 +49,7 @@ Servo servo;
 constexpr double minTurnRatio      = 5.0;    // Minimum motor scale
 constexpr double deadZone          = 0.1;     // Absolute deadzone value
 constexpr double throttleExp       = 1.5;     // Throttle ramping exponent
-constexpr double brakeExp          = 2.0;     // Brake ramping exponent
+constexpr double brakeExp          = 1.0;     // Brake ramping exponent
 constexpr double steeringExp       = 2.0;     // Brake ramping exponent
 constexpr double maxJoyRawMagn     = 32768.0; // Max magnitude of raw joystick input
 constexpr double maxTriggerRawMagn = 1024.0;  // Max magnitude of raw trigger input
@@ -159,7 +159,7 @@ struct VehicleControl {
         brake = pow(bNorm, brakeExp);
         int brakePulse = pwmMax + brake * (pwmMin - pwmMax);
         brakePulse = constrain(brakePulse, pwmMin, pwmMax);
-        servo.writeMicroseconds(brakePulse);
+        setDutyPercent(brakePulse);
 
         //  TODO: Not implemented
     }
@@ -239,8 +239,9 @@ void setup()
     Serial.println();
 
     //servo shi
-    brakeServo.attach(brakePin, pwmMin, pwmMax); 
-    brakeServo.writeMicroseconds(pwmMax); 
+    setupPwm50Hz();
+    setDutyPercent(pwmMax);
+
 }
 
 void loop()
@@ -370,4 +371,40 @@ double clamp(double value, double min, double max)
     if (value < min)
         return min;
     return value;
+}
+
+//VOODO PWM SHIT DO NOT MESS WITH THIS
+void setupPwm50Hz() {
+  pinMode(PWM_PIN, OUTPUT);
+
+  // Stop Timer2
+  TCCR2A = 0;
+  TCCR2B = 0;
+  TCNT2  = 0;
+
+  // Fast PWM, TOP = OCR2A (WGM22:0 = 7)
+  TCCR2A |= (1 << WGM20) | (1 << WGM21);
+  TCCR2B |= (1 << WGM22);
+
+  // Non-inverting on OC2B (D3)
+  TCCR2A |= (1 << COM2B1);
+
+  // Prescaler 1024
+  TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+
+  // f = 16e6 / (1024 * (1 + OCR2A))
+  // OCR2A = 311 => ~50.08 Hz
+  OCR2A = 311;
+
+  // start at 0% duty (never pull low if you’re using NPN open-collector,
+  // but remember: D3 drives transistor base, so "HIGH on D3" means "S low")
+  OCR2B = 0;
+}
+
+// dutyPct: 0..100
+void setDutyPercent(double dutyPct) {
+  if (dutyPct < 16) dutyPct = 16;
+  if (dutyPct > 67) dutyPct = 67;
+  uint16_t top = OCR2A;
+  OCR2B = (uint8_t)((top + 1) * (dutyPct / 100.0f));
 }
