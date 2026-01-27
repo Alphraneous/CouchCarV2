@@ -38,7 +38,8 @@ bool onState = true;
 //Brake servo
 const int PWM_PIN = 3;
 const int pwmMin = 16; //duty cycle% //DO NOT GO LOWER THAN 16
-const int pwmMax = 30; //duty cycle% //DO NOT GO HIGHER THAN 67
+const int pwmMax = 80; //duty cycle% //DO NOT GO HIGHER THAN 67
+const uint32_t PERIOD_US = 20000UL; // 50Hz
 
 void setupPwm50Hz();
 void setDutyPercent(double dutyPct);
@@ -374,37 +375,94 @@ double clamp(double value, double min, double max)
 }
 
 //VOODO PWM SHIT DO NOT MESS WITH THIS
+// ===============================
+// True 50Hz duty-cycle PWM on D3 using Timer2 ISR
+// ===============================
+
+// Timer2 tick: prescaler 8 => 2MHz => 0.5us per tick
+static inline uint32_t usToTicks(uint32_t us) { return us * 2UL; }
+constexpr uint16_t MAX_TICKS = 255;
+
+volatile uint32_t high_us = 10000;      // default high time
+volatile uint32_t remaining_ticks = 0;  // countdown in Timer2 ticks
+volatile bool pin_high = false;
+
+// Forward decls already in your code:
+// void setupPwm50Hz();
+// void setDutyPercent(double dutyPct);
+
+static inline void scheduleNextChunk() {
+  uint16_t chunk = (remaining_ticks > MAX_TICKS) ? MAX_TICKS : (uint16_t)remaining_ticks;
+  if (chunk == 0) chunk = 1;
+  OCR2A = (uint8_t)chunk;
+  remaining_ticks -= chunk;
+}
+
+ISR(TIMER2_COMPA_vect) {
+  if (remaining_ticks > 0) {
+    scheduleNextChunk();
+    return;
+  }
+
+  if (!pin_high) {
+    // Rising edge: start HIGH portion
+    digitalWrite(PWM_PIN, HIGH);
+    pin_high = true;
+
+    uint32_t hu = high_us;
+    remaining_ticks = usToTicks(hu);
+    if (remaining_ticks == 0) remaining_ticks = 1;
+    scheduleNextChunk();
+  } else {
+    // Falling edge: start LOW portion
+    digitalWrite(PWM_PIN, LOW);
+    pin_high = false;
+
+    uint32_t lu = PERIOD_US - high_us;
+    remaining_ticks = usToTicks(lu);
+    if (remaining_ticks == 0) remaining_ticks = 1;
+    scheduleNextChunk();
+  }
+}
+
 void setupPwm50Hz() {
   pinMode(PWM_PIN, OUTPUT);
+  digitalWrite(PWM_PIN, LOW);
+  pin_high = false;
 
-  // Stop Timer2
+  // Configure Timer2 for CTC interrupts
+  cli();
   TCCR2A = 0;
   TCCR2B = 0;
   TCNT2  = 0;
 
-  // Fast PWM, TOP = OCR2A (WGM22:0 = 7)
-  TCCR2A |= (1 << WGM20) | (1 << WGM21);
-  TCCR2B |= (1 << WGM22);
+  // CTC mode (TOP = OCR2A)
+  TCCR2A |= (1 << WGM21);
 
-  // Non-inverting on OC2B (D3)
-  TCCR2A |= (1 << COM2B1);
+  // Prescaler = 8 => 2MHz timer tick (0.5us)
+  TCCR2B |= (1 << CS21);
 
-  // Prescaler 1024
-  TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
+  // Enable compare match A interrupt
+  TIMSK2 |= (1 << OCIE2A);
 
-  // f = 16e6 / (1024 * (1 + OCR2A))
-  // OCR2A = 311 => ~50.08 Hz
-  OCR2A = 311;
+  // Kick the ISR quickly
+  remaining_ticks = 1;
+  OCR2A = 1;
 
-  // start at 0% duty (never pull low if you’re using NPN open-collector,
-  // but remember: D3 drives transistor base, so "HIGH on D3" means "S low")
-  OCR2B = 0;
+  sei();
 }
 
 // dutyPct: 0..100
 void setDutyPercent(double dutyPct) {
-  if (dutyPct < 16) dutyPct = 16;
-  if (dutyPct > 67) dutyPct = 67;
-  uint16_t top = OCR2A;
-  OCR2B = (uint8_t)((top + 1) * (dutyPct / 100.0f));
+  if (dutyPct < pwmMin) dutyPct = pwmMin;
+  if (dutyPct > pwmMax) dutyPct = pwmMax;
+
+  uint32_t hu = (uint32_t)((PERIOD_US * dutyPct) / 100.0);
+
+  // Ensure within [0, PERIOD_US]
+  if (hu > PERIOD_US) hu = PERIOD_US;
+
+  noInterrupts();
+  high_us = hu;
+  interrupts();
 }
