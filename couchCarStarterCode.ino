@@ -37,8 +37,8 @@ bool onState = true;
 
 //Brake servo
 const int PWM_PIN = 3;
-const int pwmMin = 5; //duty cycle% //DO NOT GO LOWER THAN 16
-const int pwmMax = 100; //duty cycle% //DO NOT GO HIGHER THAN 67
+const double pwmMin = 5; //duty cycle% //DO NOT GO LOWER THAN 16
+const double pwmMax = 9; //duty cycle% //DO NOT GO HIGHER THAN 67
 const uint32_t PERIOD_US = 20000UL; // 50Hz
 
 void setupPwm50Hz();
